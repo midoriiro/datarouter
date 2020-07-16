@@ -8,8 +8,8 @@ namespace datarouter
 {
     class Program
     {
-        private const string SourceFolderPath = "C:\\Users\\jrzkv\\Downloads";
-        private const string TargetFolderPath = "\\\\FATNAS\\plex\\Library\\Movies";
+        private const string SourceFolderPath = "C:\\Users\\jrz\\Downloads";
+        private const string TargetFolderPath = "\\\\FATNAS\\plex\\Library\\Movies\\";
         private static Logger _logger;
         private static int _filesCount;
 
@@ -32,7 +32,7 @@ namespace datarouter
         private static void Handle()
         {
             var listFiles = RetrieveFiles()
-                .Where(x => x.EndsWith(".mp4") || x.EndsWith(".avi") || x.EndsWith(".mkv") || x.EndsWith(".mpeg") || x.EndsWith(".txt"));
+                .Where(x => x.EndsWith(".mp4") || x.EndsWith(".avi") || x.EndsWith(".mkv") || x.EndsWith(".mpeg"));
             if (!MoveFiles(listFiles))
             {
                 throw new IOException("Something went wrong trying to move files from source to target !");
@@ -61,7 +61,20 @@ namespace datarouter
             {
                 foreach (var file in listFiles)
                 {
-                    File.Copy(file, TargetFolderPath + GetName(file));
+                    var fileName = GetName(file);
+                    var fileTargetPath = TargetFolderPath + fileName;
+                    if (File.Exists(fileTargetPath))
+                    {
+                        _logger.Debug($"File: {GetName(file)} already exist in the target folder ({TargetFolderPath})");
+                        continue;
+                    }
+                    _logger.Debug($"Copying: {fileName} to: {fileTargetPath}  ");
+                    File.Copy(file, fileTargetPath);
+                    if (!File.Exists(fileTargetPath))
+                    {
+                        throw new IOException($"Something went wrong trying to copy {fileName} from source to target !");
+                    }
+                    _logger.Debug($"Copy successfull !");
                     File.Delete(file);
                     _filesCount++;
                 }
