@@ -1,6 +1,13 @@
-﻿using System.Collections.Generic;
+﻿using System;
+using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.ComponentModel.Design;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Text.RegularExpressions;
+using System.Threading.Tasks;
+using System.Xml.Xsl;
 using Serilog;
 using Serilog.Core;
 
@@ -8,89 +15,75 @@ namespace datarouter
 {
     class Program
     {
-        private const string SourceFolderPath = "C:\\Users\\jrz\\Downloads";
-        private const string TargetFolderPath = "\\\\FATNAS\\plex\\Library\\Movies\\";
+        private const string SourceFolderPath = @"D:\encode\processing\Hannibal\S03";
+        private const string TargetFolderPath = @"D:\Temp";
+        private const string CsvFile = @"statistics.csv";
         private static Logger _logger;
-        private static int _filesCount;
+        
+        private static readonly Regex RegexFileExtensions = new Regex(@"\.mp4|\.avi|\.mkv|\.mpeg$");
 
         static void Main(string[] args)
         {
-            ConfigureLogger();
-            Handle();
+            try
+            {
+                ConfigureLogger();
+                Handle();
+            }
+            catch (Exception exception)
+            {
+                _logger.Error(exception.Message, exception);
+                Environment.Exit(-1);
+            }
         }
 
         private static void ConfigureLogger()
         {
             _logger = new LoggerConfiguration()
-#if DEBUG
+                #if DEBUG
                 .WriteTo.Console()
-#endif
+                #endif
                 .WriteTo.File("logs/log.txt", rollingInterval: RollingInterval.Day)
                 .CreateLogger();
         }
         
         private static void Handle()
         {
-            var listFiles = RetrieveFiles()
-                .Where(x => x.EndsWith(".mp4") || x.EndsWith(".avi") || x.EndsWith(".mkv") || x.EndsWith(".mpeg"));
-            if (!MoveFiles(listFiles))
-            {
-                throw new IOException("Something went wrong trying to move files from source to target !");
-            }
-            _logger.Information(_filesCount > 1
-                ? $"Successfully moved {_filesCount} files"
-                : $"Successfully moved {_filesCount} file");
+            var files = RetrieveFiles();
+            var report = Dispatcher.Copy(
+                files,
+                2,
+                1000000
+            );
+            var csvlogger = new CsvLogger(CsvFile);
+            csvlogger.WriteLine(
+                report.Size,
+                report.Threads,
+                report.FileCount,
+                report.ChunkSize,
+                report.ElapsedTime,
+                report.Speed
+            );
+            csvlogger.Dispose();
         }
 
-        private static IEnumerable<string> RetrieveFiles()
+        private static List<FileTransfer> RetrieveFiles()
         {
             if (!Directory.Exists(SourceFolderPath))
             {
                 throw new DirectoryNotFoundException($"{SourceFolderPath}: the specified folder does not exist");
             }
-            return Directory.GetFiles(SourceFolderPath).ToList();
-        }
-        private static bool MoveFiles(IEnumerable<string> listFiles)
-        {
-            if (!Directory.Exists(TargetFolderPath))
-            {
-                throw new DirectoryNotFoundException($"{TargetFolderPath}: the specified folder does not exist");
-            }
-            _filesCount = 0;
-            try
-            {
-                foreach (var file in listFiles)
+
+            return Directory.GetFiles(SourceFolderPath)
+                .Where(x => RegexFileExtensions.Match(x).Success)
+                .Select(x =>
                 {
-                    var fileName = GetName(file);
-                    var fileTargetPath = TargetFolderPath + fileName;
-                    if (File.Exists(fileTargetPath))
-                    {
-                        _logger.Debug($"File: {GetName(file)} already exist in the target folder ({TargetFolderPath})");
-                        continue;
-                    }
-                    _logger.Debug($"Copying: {fileName} to: {fileTargetPath}  ");
-                    File.Copy(file, fileTargetPath);
-                    if (!File.Exists(fileTargetPath))
-                    {
-                        throw new IOException($"Something went wrong trying to copy {fileName} from source to target !");
-                    }
-                    _logger.Debug($"Copy successfull !");
-                    File.Delete(file);
-                    _filesCount++;
-                }
-            }
-            catch (IOException e)
-            {
-                _logger.Error(e.Message);
-                return false;
-            }
-
-            return true;
-        }
-
-        private static string GetName(string str)
-        {
-            return str.Substring(str.LastIndexOf('\\'));
+                    var inputStream = File.Open(x, FileMode.Open);
+                    var filename = new FileInfo(inputStream.Name).Name;
+                    var destinationPath = Path.Combine(TargetFolderPath, filename);
+                    var outputStream = File.OpenWrite(destinationPath);
+                    return new FileTransfer(inputStream, outputStream);
+                })
+                .ToList();
         }
     }
 }
